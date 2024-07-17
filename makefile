@@ -13,3 +13,6 @@ clean:
 $(TARGET): $(OBJECTS)
 	$(CC) $(CFLAGS) -o bin/$(TARGET) $(OBJECTS)
 
+
+$(TARGET)_anytime: $(OBJECTS)
+	$(CC) $(CFLAGS) -DANYTIME -o bin/$(TARGET)_anytime $(SOURCES)

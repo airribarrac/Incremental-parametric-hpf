@@ -146,6 +146,7 @@ typedef struct edge
 
 //---------------  Global variables ------------------
 static long long APP_VAL = 10000LL;
+static int DECIMALS = 4;
 static int n = 0;
 static int m = 0;
 static int numNodes = 0;
@@ -494,7 +495,6 @@ computeHeuristicLambda()
 static void
 readGraphFile (void)
 {
-  double thetime = timer();
   int i;
 
   n = 0;
@@ -763,7 +763,7 @@ readGraphFile (void)
 
   currLambda = max(currLambda,(long long) (injectedLambda*APP_VAL));
   
-  printf("c Initial lambda = %lld\n", currLambda);
+  printf("c Initial lambda = %.*lf\n", DECIMALS,(double)currLambda/APP_VAL);
 
   for(i=0; i<numArcs; ++i)
   {
@@ -816,7 +816,6 @@ readGraphFile (void)
 #endif
 
 
-  initTime = timer()-thetime;
 }
 
 
@@ -934,7 +933,7 @@ merge (Node *parent, Node *child, Arc *newArc)
 
 
 static inline void 
-pushUpward (Arc *currentArc, Node *child, Node *parent, const int resCap) 
+pushUpward (Arc *currentArc, Node *child, Node *parent, const long long resCap) 
 {
 #ifdef STATS
   ++ numPushes;
@@ -961,7 +960,7 @@ pushUpward (Arc *currentArc, Node *child, Node *parent, const int resCap)
 
 
 static inline void
-pushDownward (Arc *currentArc, Node *child, Node *parent, int flow) 
+pushDownward (Arc *currentArc, Node *child, Node *parent, long long flow) 
 {
 #ifdef STATS
   ++ numPushes;
@@ -1298,7 +1297,7 @@ incrementalCut(void)
   copySourceSet();
   int iteration = 0;
   printf("c Iteration %d\n", iteration++);
-  printf("c Computing mincut for lambda = %lf\n", (double)currLambda/APP_VAL);
+  printf("c Computing mincut for lambda = %.*lf\n", DECIMALS,(double)currLambda/APP_VAL);
   while ((strongRoot = getHighestStrongRoot (theparam)))  
   { 
     processRoot (strongRoot);
@@ -1327,7 +1326,12 @@ incrementalCut(void)
       copySourceSet();
     }
 
-    printf("c Updating capacities for lambda = %lf\n", (double)currLambda/APP_VAL);
+#ifdef ANYTIME
+  double totalTime = timer()-thetime;
+  printf("c %d,%d,%.4lf,%.4lf,%.*lf,%.*lf,%d\n", n, m, initTime, totalTime, DECIMALS, (double)initLambda/APP_VAL, DECIMALS, (double)bestLambda/APP_VAL,iteration);
+#endif
+
+    printf("c Updating capacities for lambda = %.*lf\n", DECIMALS, (double)currLambda/APP_VAL);
     updateCapacities(theparam);
 
     while ((strongRoot = getHighestStrongRoot (theparam)))  
@@ -1349,8 +1353,8 @@ incrementalCut(void)
     printf("c ERROR: value is negative\n");
   }
 
-  css = computeNumerator();
-  qs = computeSourceWeight();
+  //css = computeNumerator();
+  //qs = computeSourceWeight();
   if ( qs !=0 )
   {
     currLambda = css/qs;
@@ -1358,7 +1362,7 @@ incrementalCut(void)
   }
   double totalTime = timer()-thetime;
 
-  printf("c %d,%d,%.4lf,%.4lf,%.4lf,%.4lf,%d\n", n, m, initTime, totalTime, (double)initLambda/APP_VAL, (double)bestLambda/APP_VAL,iteration);
+  printf("c %d,%d,%.4lf,%.4lf,%.*lf,%.*lf,%d\n", n, m, initTime, totalTime, DECIMALS, (double)initLambda/APP_VAL, DECIMALS, (double)bestLambda/APP_VAL,iteration);
 	if ( dumpSourceSetFile != NULL )
 	{
 		dumpSourceSet(dumpSourceSetFile);
@@ -1803,11 +1807,12 @@ void parseParameters(int argc, char *argv[])
     else if (strcmp(argv[i], "--accuracy")==0 )
     {
       int accuracy  = atoi(argv[++i]);
+			DECIMALS = accuracy;
       int z=0;
       APP_VAL = 1;
       for( z=0; z<accuracy; z++)
       {
-        APP_VAL *=10;
+        APP_VAL *=10LL;
       }
     }
     else if (strcmp(argv[i], "--injectLambda")==0 )
@@ -1843,6 +1848,8 @@ main(int argc, char ** argv)
 
   parseParameters(argc, argv);
   printf ("c Incremental cur procedure for maximum subgraph density\n");
+	
+  double thetime = timer();
   readGraphFile();
 
 #ifdef PROGRESS
@@ -1855,6 +1862,7 @@ main(int argc, char ** argv)
   printf ("c Finished initialization.\n"); fflush (stdout);
 #endif
 
+  initTime = timer()-thetime;
   incrementalCut();
 
 #ifdef PROGRESS
