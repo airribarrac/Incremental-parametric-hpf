@@ -198,7 +198,7 @@ static llint numArcScans = 0;
 
 
 static long long 
-computeNumerator (void)
+computeNumerator (char *sourceSet)
 {
   int i;
   long long res = 0;
@@ -209,7 +209,7 @@ computeNumerator (void)
 
     long long weight = arcList[i].capacity;
 
-    res += weight * (inSourceSet[from-2] & inSourceSet[to-2]);
+    res += weight * (sourceSet[from-2] & sourceSet[to-2]);
   }
 #ifdef DIRECTED_CASE
   return res;
@@ -236,7 +236,7 @@ dumpSourceSet (FILE *out)
 }
 
 static long long 
-computeSourceWeight (void)
+computeSourceWeight (char *sourceSet)
 {
   int i;
   long long res = 0;
@@ -244,7 +244,7 @@ computeSourceWeight (void)
   for (i=2; i<numNodes; ++i)
   {
 
-    if (inSourceSet[i-2])
+    if (sourceSet[i-2])
     {
       res += weights[i-2];
       ++sourceSetSize;
@@ -501,7 +501,6 @@ readGraphFile (void)
   m = 0;
   currLambda = 0;
 #ifdef FAST_IO
-  printf("c using fast io\n");
   n = readInt();
   m = readInt();
 #else
@@ -757,8 +756,7 @@ readGraphFile (void)
   currLambda = computeHeuristicLambda();
 
 #else
-  printf("c Computing lambda with division\n");
-  currLambda = computeNumerator() / computeSourceWeight();
+  currLambda = computeNumerator(inSourceSet) / computeSourceWeight(inSourceSet);
 #endif
 
   currLambda = max(currLambda,(long long) (injectedLambda*APP_VAL));
@@ -1304,14 +1302,14 @@ incrementalCut(void)
   }
 
 
-  long long css = computeNumerator();
-  long long qs = computeSourceWeight();
+  long long css = computeNumerator(inSourceSet);
+  long long qs = computeSourceWeight(inSourceSet);
   //currLambda = css / qs;
 
-  printf("c C(S,S)/q(S) = %lld/%lld = %lld\n",css, qs, ceil_div(css, qs));
+  //printf("c C(S,S)/q(S) = %lld/%lld = %lld\n",css, qs, ceil_div(css, qs));
   long long val = css - currLambda * qs;
 
-  printf("C(S,S) - lambda * q(S) = %lld\n", val);
+  printf("C(S,S) - lambda * q(S) = %lf\n", (double)val/APP_VAL);
 
   while (val > 0)
   {
@@ -1338,13 +1336,13 @@ incrementalCut(void)
     { 
       processRoot (strongRoot);
     }
-    css = computeNumerator();
-    qs = computeSourceWeight();
+    css = computeNumerator(inSourceSet);
+    qs = computeSourceWeight(inSourceSet);
     //mincut = computeMinCut();
 
     
     val = css - currLambda * qs;
-    printf("C(S,S) - lambda * q(S) = %lld\n", val);
+  	printf("C(S,S) - lambda * q(S) = %lf\n", (double)val/APP_VAL);
   }
 
 
@@ -1362,11 +1360,24 @@ incrementalCut(void)
   }
   double totalTime = timer()-thetime;
 
-  printf("c %d,%d,%.4lf,%.4lf,%.*lf,%.*lf,%d\n", n, m, initTime, totalTime, DECIMALS, (double)initLambda/APP_VAL, DECIMALS, (double)bestLambda/APP_VAL,iteration);
+
+  css = computeNumerator(bestSourceSet);
+  qs = computeSourceWeight(bestSourceSet);
+  //printf("c %d,%d,%.4lf,%.4lf,%.*lf,%.*lf,%d\n", n, m, initTime, totalTime, DECIMALS, (double)initLambda/APP_VAL, DECIMALS, (double)bestLambda/APP_VAL,iteration);
+	printf("\n");
+	printf("c Optimal solution found: density* = %.*lf\n", DECIMALS, (double)bestLambda/APP_VAL);
+	printf("c C(S, S) = %lld, q(S) = %lld\n", css/APP_VAL, qs);
 	if ( dumpSourceSetFile != NULL )
 	{
 		dumpSourceSet(dumpSourceSetFile);
 		fclose(dumpSourceSetFile);
+	}
+	else
+	{
+		printf("\n");
+		printf("c To dump the list of nodes in the densest subgraph into\n");
+		printf("c a file, use option \"--dumpDensest FILE\"\n");
+
 	}
 
 }
@@ -1772,7 +1783,7 @@ void printHelp(int argc, char *argv[])
   printf("  --injectLambda L       start incremental procedure with L     \n");
   printf("  --weightedEdges        enable if input has weights on edges   \n");
   printf("  --weightedNodes        enable if input has weights on nodes   \n");
-  printf("  --dumpSourceSet FILE   dump list of nodes in optimal solution \n");
+  printf("  --dumpDensest FILE     dump list of nodes in optimal solution \n");
   printf("                         to FILE                                \n");
 
   printf("\n\nNote that this program read from stdin\n");
@@ -1827,7 +1838,7 @@ void parseParameters(int argc, char *argv[])
     {
       weightedNodes = 1;
     }
-    else if (strcmp(argv[i], "--dumpSourceSet") == 0)
+    else if (strcmp(argv[i], "--dumpDensest") == 0)
 		{
 			dumpSourceSetFile = fopen( argv[++i], "w");
 		}
@@ -1847,7 +1858,7 @@ main(int argc, char ** argv)
 {
 
   parseParameters(argc, argv);
-  printf ("c Incremental cur procedure for maximum subgraph density\n");
+  printf ("c Incremental cut procedure for maximum subgraph density\n");
 	
   double thetime = timer();
   readGraphFile();
@@ -1875,8 +1886,8 @@ main(int argc, char ** argv)
   checkOptimality ();
 #endif
 
-  printf ("c Number of nodes     : %d\n", numNodes);
-  printf ("c Number of arcs      : %d\n", numArcs);
+  //printf ("c Number of nodes     : %d\n", numNodes);
+  //printf ("c Number of arcs      : %d\n", numArcs);
 #ifdef STATS
   printf ("c Number of arc scans : %lld\n", numArcScans);
   printf ("c Number of mergers   : %d\n", numMergers);
