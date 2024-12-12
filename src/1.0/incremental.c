@@ -1780,7 +1780,7 @@ void printHelp(int argc, char *argv[])
   printf("                         note that a big N may induce errors on \n");
   printf("                         graphs that are big or have big weights\n");
   printf("                         by default, 4 decimal places           \n");
-  printf("  --injectLambda L       start incremental procedure with L     \n");
+  printf("  --startLambda L        start incremental procedure with L     \n");
   printf("  --weightedEdges        enable if input has weights on edges   \n");
   printf("  --weightedNodes        enable if input has weights on nodes   \n");
   printf("  --dumpDensest FILE     dump list of nodes in optimal solution \n");
@@ -1826,7 +1826,7 @@ void parseParameters(int argc, char *argv[])
         APP_VAL *=10LL;
       }
     }
-    else if (strcmp(argv[i], "--injectLambda")==0 )
+    else if (strcmp(argv[i], "--startLambda")==0 )
     {
       injectedLambda = atof(argv[++i] );
     }
