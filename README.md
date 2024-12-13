@@ -42,7 +42,7 @@ This software provides the following options to modify its default behaviour.
 
 # Input format
 
-The input graph, with ``N`` nodes and ``M`` edges, is to be provided in the following text format:
+The input graph, with ``n`` nodes and ``m`` edges, is to be provided in the following text format:
 
 ```
 n m
