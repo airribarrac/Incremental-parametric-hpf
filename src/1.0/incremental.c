@@ -805,12 +805,22 @@ readGraphFile (void)
 
 
 
-  free(adjacents);
+	if (adjacents!=NULL)
+	{
+  	free(adjacents);
+	}
   adjacents = NULL;
 
 #ifdef USE_HEURISTIC
-  free(edges);
-  free(firstEdge);
+	if (edges!=NULL)
+	{
+  	free(edges);
+	}
+
+	if (firstEdge!=NULL)
+	{
+  	free(firstEdge);
+	}
 #endif
 
 
@@ -1758,16 +1768,38 @@ freeMemory (void)
     }
   }
 
-  free (adjacencyList);
+	
+  if (adjacencyList != NULL)
+	{
+		free(adjacencyList);
+	}
 
-  free (labelCount);
+  if (labelCount != NULL)
+	{
+		free(labelCount);
+	}
 
-  free (arcList);
+  if (arcList != NULL)
+	{
+		free(arcList);
+	}
 
-  free(degrees);
-  free(weights);
-  free(inSourceSet);
-  free(bestSourceSet);
+  if (degrees != NULL)
+	{
+		free(degrees);
+	}
+  if (weights != NULL)
+	{
+		free(weights);
+	}
+  if (inSourceSet != NULL)
+	{
+		free(inSourceSet);
+	}
+  if (bestSourceSet != NULL)
+	{
+		free(bestSourceSet);
+	}
 }
 
 void printHelp(int argc, char *argv[])
