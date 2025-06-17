@@ -1,3 +1,4 @@
+#include <stdint.h>
 #include <stdio.h>
 #include <math.h>
 #include <sys/time.h>
@@ -7,22 +8,156 @@
 
 typedef long long int llint;
 
-int readInt()
+// Macro for asserting a condition, print a message and [filename:line] if fail
+#define assertFlag(XX_CONDITION,YY_MESSAGE) assertFlagOn(XX_CONDITION, YY_MESSAGE, __LINE__, __FILE__);
+
+// Macro for trying to allocate a dynamic array
+// Prints error message and exits if fail
+//
+// Note: could be made simpler with typeof, but it is non-standard,
+// and having the type explicitly stated is good for readability
+#define tryAllocate(XX_VAR,XX_SIZE,XX_TYPE) \
+if ((XX_VAR = (XX_TYPE*) malloc (XX_SIZE * sizeof (XX_TYPE))) == NULL) \
+{ \
+  printf ("%s Line %d: Out of memory\n", __FILE__, __LINE__);\
+  exit (1); \
+} 
+
+
+static void
+assertFlagOn (int flag, char *msg, int line, char *file)
 {
-  int res = 0;
-  char c = getchar_unlocked();
-  while( c < '0' || c > '9' )
+  if (!flag)
   {
-    c = getchar_unlocked();
+    fprintf(stderr, "\x1b[31mERROR:\x1b[0m%s [%s:%d]\n", msg, file, line);
+    exit(-1);
+  }
+}
+
+size_t getLine(char **linePtr, size_t *n, FILE *stream)
+{
+    if (!linePtr || !n || !stream)
+        return (size_t)-1;
+
+    if (*linePtr == NULL || *n == 0) {
+        *n = 128;
+        *linePtr = malloc(*n);
+        if (!*linePtr) return (size_t)-1;
+    }
+
+    size_t len = 0;
+    size_t newSize = 0;
+    
+    char *tmp = NULL;
+
+    while (1)
+    {
+        if (fgets(*linePtr + len, *n - len, stream) == NULL)
+        {
+            if (len == 0) return (size_t)-1; // Nothing read
+            break; // Partial line read before EOF
+        }
+
+        len += strlen(*linePtr + len);
+
+        // If newline was read, we're done
+        if (len > 0 && (*linePtr)[len - 1] == '\n')
+            break;
+
+        // Otherwise, line is too long — need to grow buffer
+        newSize = *n * 2;
+        tmp = realloc(*linePtr, newSize);
+        if (!tmp) return (size_t)-1;
+
+        *linePtr = tmp;
+        *n = newSize;
+    }
+
+    return len;
+}
+
+// Consumes a word from line, and copies it into buffer
+static char*
+readWord (char *line, size_t *lineLen, char *buffer, size_t bufLen)
+{
+  int i=0;
+
+  while (*line == ' ')
+  {
+    line ++;
+    (*lineLen)--;
   }
 
-  while ( c >= '0' )
+  for(i=0; i<bufLen-1 && (*lineLen)>0; ++i)
   {
-    res = res*10 + (c - '0');
-    c = getchar_unlocked();
+    if ( *line == ' ') break;
+    buffer[i] = *line;
+    line++;
+    (*lineLen)--;
+  }
+
+  buffer[i] = '\0';
+
+  return line;
+}
+
+inline int
+isDigit(char c)
+{
+  return c>='0' && c<='9';
+}
+
+static char *
+tryReadInt( char *ptr, size_t *len, int *in, int *correct )
+{
+  char c = *ptr;
+  *correct = 0;
+
+  while( ! isDigit(c) && (*len) > 0 )
+  {
+    ptr++;
+    c = *ptr;
+    (*len)--;
+  }
+
+  *in = 0;
+
+  while( isDigit(c) && (*len) > 0)
+  {
+    *in = (*in * 10 + ( c - '0'));
+    *correct = 1;
+    ptr++;
+    c = *ptr;
+    (*len)--;
+  }
+
+  return ptr;
+
+}
+
+
+int readInt(char *c)
+{
+  int res = 0;
+  *c = getchar_unlocked();
+  while( *c < '0' || *c > '9' )
+  {
+    *c = getchar_unlocked();
+  }
+
+  while ( *c >= '0' )
+  {
+    res = res*10 + (*c - '0');
+    *c = getchar_unlocked();
   }
   return res;
 }
+
+enum problemTypeEnum{
+  MINIMINIZATION,
+  MAXIMIZATION,
+  UNINITIALIZED
+};
 
 static char *
 getNextWord (char *line, char *word)
@@ -151,12 +286,16 @@ static int n = 0;
 static int m = 0;
 static int numNodes = 0;
 static int numArcs = 0;
+static int isSymmetric = 1;
 static int source = 0;
 static int sink = 0;
 static int numParams = 0;
 static int lastInternalArc = 0;
 static int weightedEdges = 0;
 static int weightedNodes = 0;
+static int numParametricArcs = 0;
+
+static enum problemTypeEnum problemType = UNINITIALIZED;
 
 static double initTime = 0.0f;
 static double injectedLambda = 0.0f;
@@ -169,6 +308,7 @@ static Node *adjacencyList = NULL;
 static Root *strongRoots = NULL;
 static int *labelCount = NULL;
 static Arc *arcList = NULL;
+static Arc **paramArcList = NULL;
 static Edge *edges = NULL;
 
 static double TOL = 1e-5;
@@ -180,6 +320,7 @@ static int *adjacents = NULL;
 static int *value= NULL;
 static int *weights = NULL;
 static char *inSourceSet = NULL;
+static char *noSourceSet = NULL;
 static char *bestSourceSet = NULL;
 static int *edgeEnd = NULL;
 static int *firstEdge = NULL;
@@ -374,11 +515,7 @@ createOutOfTree (Node *nd)
 {
   if (nd->numAdjacent)
   {
-    if ((nd->outOfTree = (Arc **) malloc (nd->numAdjacent * sizeof (Arc *))) == NULL)
-    {
-      printf ("%s Line %d: Out of memory\n", __FILE__, __LINE__);
-      exit (1);
-    }
+    tryAllocate(nd->outOfTree, nd->numAdjacent, Arc*);
   }
 }
 
@@ -427,70 +564,441 @@ int cmp_edge(const void *lhs, const void *rhs)
   if(el->v < er->v) return -1;
   if(el->v > er->v) return 1;
 
+  return 0;
 }
 
-#ifdef USE_HEURISTIC
-static long long 
-computeHeuristicLambda()
+
+static void allocateParamArcList()
 {
-
-  long long numerator = 0;
-  long long denominator = 0;
-  
-  int i;
-  int u;
-  int v;
-  int e;
-
-  int *order = NULL;
-  long long bestLambda = 0;
-  if ((order= (int*) malloc ((numNodes-2) * sizeof (int))) == NULL)
-  {
-    printf ("%s, %d: could not allocate memory.\n", __FILE__, __LINE__);
-    exit (1);
-  } 
-
-  for( i=0; i<numNodes-2; i++)
-  {
-    inSourceSet[u] = 0;
-    order[i]=i;
-  }
-
-  qsort(order, numNodes-2, sizeof(int), cmp_deg);
-
-  for( i=0; i<(numNodes-2); ++i)
-  {
-    u = order[i];
-
-    if(inSourceSet[u]) continue;
-    inSourceSet[u] = 1;
-
-    denominator += weights[u];
+    int i = 0;
+    int idx = 0;
+  tryAllocate(paramArcList, numParametricArcs,Arc*);
+	if ((paramArcList= (Arc **)malloc(numParametricArcs * sizeof(Arc*))) == NULL)
+	{
+		printf("Could not allocate memory.\n");
+		exit(0);
+	}
 
 
-    for( e = firstEdge[u]; edges[e].u==u ; ++e)
-
+    for ( i = 0; i < numArcs; ++i)
     {
+        uint from = arcList[i].from;
+        uint to = arcList[i].to;
 
-      v = edges[e].v;//edgeEnd[e];
-      if( !inSourceSet[v] ) continue;
-
-      numerator += edges[e].w*APP_VAL; 
-
+        if ( (from == source || to == sink)
+                && arcList[i].slope!= 0.0)
+        {
+#ifdef VERBOSE
+            printf("c add arc %d->%d with a = %lf b=%lf to parametric arcs\n",
+                    from,
+                    to,
+                    arcList[i].multiplier,
+                    arcList[i].constant);
+#endif
+            paramArcList[idx++] = &(arcList[i]);
+        }
     }
 
+}
 
-    long long thisLambda = ceil_div(numerator,denominator);
+static double computePiecewiseIntersect(double lambda_0, double lambda_1) {
+#ifdef DEBUG
+    printf("c computing piecewise intersection in [%lf, %lf]\n",  lambda_0, lambda_1);
+#endif
+    double res = 1.0 / 0.0; // set as infinite by default
 
-    bestLambda = lmax(thisLambda, bestLambda);
+    double a_l = 0, b_l = 0, a_h = 0, b_h = 0;
+    double arc_constant, arc_multiplier, arc_bp;
+    int from, to, i;
 
+#ifdef DEBUG
+    char *activated = calloc(numParametricArcs, sizeof(char));
+    char *initialized = calloc(numParametricArcs, sizeof(char));
+#endif
+
+    // Initialization step
+    for (i = 0; i < numArcs; ++i) {
+        from = arcList[i].from;
+        to = arcList[i].to;
+        arc_constant = arcList[i].intercept+ 0.0;
+        arc_multiplier = arcList[i].slope + 0.0;
+
+        arc_bp = -arc_constant/arc_multiplier +0.0;
+
+        int active_now = ( (arc_multiplier > 0.0 && arc_bp <= lambda_0)
+                || (arc_multiplier < 0.0 && arc_bp > lambda_0)
+                || arc_multiplier == 0.0 );
+
+#ifdef DEBUG
+        int j = arcListSuper
+        for (int j = 0; j < numParametricArcs; ++j) {
+            if (arcListSuper + i == paramArcList[j]) {
+                initialized[j] = active_now ? 1 : 0;
+                activated[j] = active_now ? 1 : 0;
+            }
+        }
+#endif
+
+        if (!active_now) continue;
+
+        if ((adjacencyList[from].label==numNodes) && !(adjacencyList[to].label==numNodes)) {
+            a_l += arc_multiplier;
+            b_l += arc_constant;
+        }
+        if ((adjacencyList[from].label!=numNodes) && !(adjacencyList[to].label!=numNodes)) {
+            a_h += arc_multiplier;
+            b_h += arc_constant;
+        }
+    }
+
+#ifdef VERBOSE
+    printf("c Initial coefficients: a_l=%.4lf, b_l=%.4lf | a_h=%.4lf, b_h=%.4lf\n", a_l, b_l, a_h, b_h);
+    printf("c Source set lpS: ");
+    for (i = 0; i < numNodesSuper; ++i) printf("%d", lpS[i]);
+    printf("\n");
+    printf("c Source set hpS: ");
+    for (i = 0; i < numNodesSuper; ++i) printf("%d", hpS[i]);
+    printf("\n");
+#endif
+
+    for (i = 0; i < numParametricArcs; ++i) {
+        arc_constant = paramArcList[i]->intercept+ 0.0;
+        arc_multiplier = paramArcList[i]->slope + 0.0;
+        arc_bp = -arc_constant / arc_multiplier + 0.0;
+        if (arc_bp > lambda_0) break;
+    }
+
+    double lambda_prev = lambda_0 + 0.0;
+    double lambda_next;
+
+    for (; i <= numParametricArcs;) {
+        lambda_next = (i < numParametricArcs)
+            ? -paramArcList[i]->intercept/ paramArcList[i]->slope+ 0.0
+            : lambda_1 + 0.0;
+
+        if (lambda_next > lambda_1) lambda_next = lambda_1 + 0.0;
+
+        double denom = a_l - a_h;
+        if (fabs(denom) > 0.0) {
+            double lambda_star = (b_h - b_l) / denom + 0.0;
+#ifdef VERBOSE
+            printf("c check intersection in range [%.6lf, %.6lf] is %.6lf\n", lambda_prev, lambda_next, lambda_star);
+            double cut_l = evaluateCutFunction(lpS, lambda_star);
+            double cut_h = evaluateCutFunction(hpS, lambda_star);
+            printf("c low cut at %.6lf = %.6lf\n", lambda_star, cut_l);
+            printf("c high cut at %.6lf = %.6lf\n", lambda_star, cut_h);
+#endif
+            if (lambda_star >= lambda_prev && lambda_star < lambda_next) {
+#ifdef VERBOSE
+                printf("c valid intersection at lambda = %.12lf\n", lambda_star);
+#endif
+#ifdef DEBUG
+                free(activated);
+                free(initialized);
+#endif
+                res = lambda_star;
+                return res;
+            }
+        }
+
+        if (lambda_next == lambda_1) break;
+        if (i == numParametricArcs) break;
+
+        while (i < numParametricArcs) {
+            arc_constant = paramArcList[i]->intercept+ 0.0;
+            arc_multiplier = paramArcList[i]->slope+ 0.0;
+            arc_bp = -arc_constant / arc_multiplier + 0.0;
+
+            if (arc_bp > lambda_next ) break;
+
+            from = paramArcList[i]->from;
+            to = paramArcList[i]->to;
+
+            int in_lp_cut = (adjacencyList[from].label==numNodes) && !(adjacencyList[to].label==numNodes);
+            int in_hp_cut = (adjacencyList[from].label!=numNodes) && !(adjacencyList[to].label!=numNodes);
+
+            int activating = (arc_multiplier > 0);
+            double sign = activating ? 1 : -1;
+
+#ifdef DEBUG
+            int arc_index = i;
+            if (!initialized[arc_index]) {
+                printf("DEBUG WARNING: Arc %d (%d->%d) was not initialized but is now being updated at lambda = %.6lf\n",
+                       arc_index, from, to, lambda_prev);
+            }
+            if (activating && activated[arc_index]) {
+                printf("DEBUG ERROR: Activating already activated arc %d (%d->%d)\n", arc_index, from, to);
+            }
+            if (!activating && !activated[arc_index]) {
+                printf("DEBUG ERROR: Deactivating already deactivated arc %d (%d->%d)\n", arc_index, from, to);
+            }
+            activated[arc_index] = activating ? 1 : 0;
+#endif
+
+            if (in_lp_cut) {
+                a_l += arc_multiplier * sign;
+                b_l += arc_constant * sign;
+#ifdef VERBOSE
+                printf("c %s low arc (%d->%d): a_l=%.2lf, b_l=%.2lf\n", activating ? "Activating" : "Deactivating", from, to, a_l, b_l);
+#endif
+            }
+            if (in_hp_cut) {
+                a_h += arc_multiplier * sign;
+                b_h += arc_constant * sign;
+#ifdef VERBOSE
+                printf("c %s high arc (%d->%d): a_h=%.2lf, b_h=%.2lf\n", activating ? "Activating" : "Deactivating", from, to, a_h, b_h);
+#endif
+            }
+
+            ++i;
+        }
+
+        lambda_prev = lambda_next + 0.0;
+    }
+
+#ifdef DEBUG
+    free(activated);
+    free(initialized);
+#endif
+    return res;
+}
+/*
+static void
+readWord (char *buffer)
+{
+  char c = getchar();
+  while( c != '\n' && c != ' ' && c != EOF )
+  {
+    *buffer = c;
+    buffer++;
   }
-  free(order);
+}
+*/
 
-  return bestLambda;
+static void
+parseCommentLine ()
+{
+  char c = getchar();
+  while ( c != '\n' && c != EOF)
+  {
+    c = getchar();
+  }
+
+}
+
+static void
+allocateArrays(int numNodes, int numArcs)
+{
+
+  tryAllocate(inSourceSet, numNodes, char);
+  tryAllocate(bestSourceSet, numNodes, char);
+  tryAllocate(adjacencyList, numNodes, Node);
+  tryAllocate(strongRoots, numNodes, Root);
+  tryAllocate(labelCount, numNodes, int);
   
 }
-#endif
+
+static void
+initializeStructures()
+{
+  int i = 0;
+  for (i=0; i<numNodes; ++i)
+  {
+    initializeRoot (&strongRoots[i]);
+    initializeNode (&adjacencyList[i], i);
+    labelCount[i] = 0;
+  }
+
+  for (i=0; i<numArcs; ++i)
+  {
+    initializeArc (&arcList[i]);
+  }
+
+}
+
+static void 
+initializeNormalizedTree()
+{
+  int i = 0;
+  for (i=0; i<numNodes; ++i) 
+  {
+    createOutOfTree (&adjacencyList[i]);
+  }
+
+  for (i=0; i<numArcs; i++) 
+  {
+    int to = arcList[i].to;
+    int from = arcList[i].from;
+    long long capacity = arcList[i].capacity;
+
+    if (!((source == to) || (sink == from) || (from == to))) 
+    {
+      if ((source == from) && (to == sink)) 
+      {
+        arcList[i].flow = capacity;
+      }
+      else if (from == source)
+      {
+        addOutOfTreeNode (&adjacencyList[from], &arcList[i]);
+      }
+      else if (to == sink)
+      {
+        addOutOfTreeNode (&adjacencyList[to], &arcList[i]);
+      }
+      else
+      {
+        addOutOfTreeNode (&adjacencyList[from], &arcList[i]);
+      }
+    }
+  }
+
+}
+
+static void
+parseProblemLine (char *line, size_t len, int *numNodes, int *numNonParametricArcs, int *numParametricArcs)
+{
+  int correct = 1;
+  int wordLen = 20;
+  int symmetric = 1;
+  char word[wordLen];
+  // Skip 'p ' 
+  line +=2;
+
+  line = readWord(line, &len, word, wordLen);
+
+  if (strcmp(word, "min") == 0)
+  {
+    problemType = MINIMINIZATION;
+  }
+  else if (strcmp(word,  "max") == 0)
+  {
+    problemType = MAXIMIZATION;
+  }
+  else 
+  {
+    problemType = UNINITIALIZED;
+  }
+
+  assertFlag(problemType!=UNINITIALIZED, "invalid problem type, options are \'min\' and \'max\'");
+
+  // Read number of nodes
+  line = tryReadInt(line, &len, numNodes, &correct);
+  assertFlag(correct, "can not read number of nodes in parameter line");
+  // Read number of non parametric arcs 
+  line = tryReadInt(line, &len, numNonParametricArcs, &correct);
+  assertFlag(correct, "can not read number of non parametric arcs in parameter line");
+  // Read number of parametric arcs 
+  line = tryReadInt(line, &len, numParametricArcs, &correct);
+  assertFlag(correct, "can not read number of parametric arcs in parameter line");
+
+  // Read if symmetric (if present, else asume that yes)
+  line = tryReadInt(line, &len, &symmetric, &correct);
+  symmetric = correct ? symmetric : 1;
+}
+
+static int
+setupArc (int arcPos, int from, int to, int multiplier, int constant)
+{
+  Arc *ac = &arcList[arcPos++];
+  ac->from = from;
+  ac->to = to;
+  ac->slope = multiplier;
+  ac->intercept = constant;
+
+  ++ (adjacencyList[from].numAdjacent);
+  ++ (adjacencyList[to].numAdjacent);
+  return  arcPos;
+}
+
+static void
+parseNeighborsLine(char *line, size_t len, int *currArc)
+{
+  int from = 0;
+  int to = 0;
+  int constant = 0;
+  int multiplier = 0;
+  int correct = 1;
+
+  line = tryReadInt(line, &len, &from, &correct);
+  assertFlag(correct, "can not read node for adjacencyList");
+
+  while(1)
+  {
+    line = tryReadInt(line, &len, &to, &correct);
+    //Stop if no more neighbors
+    if(!correct) break;
+    line = tryReadInt(line, &len, &constant, &correct);
+    assertFlag(correct, "read neighbor, but no arc capacity");
+    *currArc = setupArc(*currArc, from, to, multiplier, constant);
+  }
+
+
+}
+
+static size_t
+readUntilNonCommentLine(char **line, size_t *sizeBuf, FILE *stream)
+{
+  size_t len = 0;
+  len = getLine(line, sizeBuf, stdin);
+  while (**line == 'c')
+  {
+    len = getLine(line, sizeBuf, stdin);
+  }
+
+  return len;
+}
+
+static void
+parseParametricArcLine(char *line, size_t len, int *currArc)
+{
+  int node = 0;
+  int constant = 0;
+  int multiplier = 0;
+  int correct = 1;
+
+  line = tryReadInt(line, &len, &node, &correct);
+  assertFlag(correct, "can not read node for parametric arc");
+  line = tryReadInt(line, &len, &multiplier, &correct);
+  assertFlag(correct, "can not read multiplier for parametric arc");
+  line = tryReadInt(line, &len, &constant, &correct);
+  assertFlag(correct, "can not read constant for parametric arc");
+
+  *currArc = setupArc(*currArc, source, node, multiplier, constant);
+  *currArc = setupArc(*currArc, node, sink, -multiplier, -constant);
+
+}
+
+static void 
+readDimacsFormatFile (FILE *stream)
+{
+  char *line = NULL;
+  size_t sizeBuf = 0;
+  size_t len = 0;
+  int localNumNodes = 0;
+  int localNumParametricArcs = 0;
+  int localNumNonParametricArcs = 0;
+  int currArc = 0;
+  int i=0;
+
+  len = readUntilNonCommentLine(&line, &sizeBuf, stream);
+
+  parseProblemLine(line, len, &numNodes, &localNumNonParametricArcs, &localNumParametricArcs);
+
+  allocateArrays(numNodes, localNumParametricArcs + localNumNonParametricArcs);
+  initializeStructures();
+
+  for(i=0; i<localNumParametricArcs; ++i)
+  {
+    len = readUntilNonCommentLine(&line, &sizeBuf, stream);
+    parseParametricArcLine(line, len, &currArc);
+  }
+
+  while(!feof(stdin))
+  {
+    len = readUntilNonCommentLine(&line, &sizeBuf, stream);
+    parseNeighborsLine(line, len, &currArc);
+  }
+}
 
 static void
 readGraphFile (void)
@@ -556,6 +1064,18 @@ readGraphFile (void)
 #endif
 
   if ((inSourceSet= (char *) malloc (n * sizeof (char))) == NULL)
+  {
+    printf ("%s, %d: Could not allocate memory.\n", __FILE__, __LINE__);
+    exit (1);
+  }
+
+  if ((inSourceSet= (char *) malloc (n * sizeof (char))) == NULL)
+  {
+    printf ("%s, %d: Could not allocate memory.\n", __FILE__, __LINE__);
+    exit (1);
+  }
+
+  if ((noSourceSet= (char *) malloc (n * sizeof (char))) == NULL)
   {
     printf ("%s, %d: Could not allocate memory.\n", __FILE__, __LINE__);
     exit (1);
@@ -1398,12 +1918,7 @@ checkOptimality (void)
   int i, check = 1;
   long long mincut = 0, *excess; 
 
-  excess = (long long *) malloc (numNodes * sizeof (long long));
-  if (!excess)
-  {
-    printf ("%s Line %d: Out of memory\n", __FILE__, __LINE__);
-    exit (1);
-  }
+  tryAllocate(excess, numNodes, long long);
 
   for (i=0; i<numNodes; ++i)
   {
